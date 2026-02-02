@@ -1,0 +1,5 @@
+# Đừng commit file này vào Git!
+.env
+node_modules/
+*.log
+.DS_Store
