@@ -63,13 +63,22 @@ app.get('/auth/url', (req, res) => {
   const csrfState = Math.random().toString(36).substring(2);
   const { codeVerifier, codeChallenge } = generatePKCE();
   
+  console.log('=== 🔐 DEBUG: Generating auth URL ===');
+  console.log('State:', csrfState);
+  console.log('Code Verifier:', codeVerifier);
+  console.log('Code Challenge:', codeChallenge);
+  console.log('Redirect URI:', REDIRECT_URI);
+  
   // Store code verifier with state as key
   codeVerifiers.set(csrfState, codeVerifier);
+  console.log('Stored code verifiers count:', codeVerifiers.size);
   
   // Clean up old verifiers after 10 minutes
   setTimeout(() => codeVerifiers.delete(csrfState), 10 * 60 * 1000);
   
-  const authUrl = `https://www.tiktok.com/v2/auth/authorize?client_key=${TIKTOK_CLIENT_KEY}&scope=${encodeURIComponent(SCOPES)}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=${csrfState}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+  const authUrl = `https://www.tiktok.com/v2/auth/authorize?client_key=${TIKTOK_CLIENT_KEY}&scope=${encodeURIComponent(SCOPES)}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=${csrfState}&code_challenge=${codeChallenge}&code_challenge_method=S256&&disable_auto_auth=1`;
+  
+  console.log('Generated auth URL:', authUrl);
   
   res.json({ 
     authUrl,
@@ -78,10 +87,16 @@ app.get('/auth/url', (req, res) => {
 });
 
 // OAuth callback
-app.get('/callback', async (req, res) => {
+app.get('/tiktok/callback', async (req, res) => {
   const { code, state } = req.query;
+  
+  console.log('=== 🔍 DEBUG: OAuth Callback ===');
+  console.log('Code:', code);
+  console.log('State:', state);
+  console.log('Query params:', req.query);
 
   if (!code) {
+    console.log('❌ ERROR: No authorization code received');
     return res.send(`
       <html>
         <body>
@@ -95,7 +110,10 @@ app.get('/callback', async (req, res) => {
 
   // Get code verifier from storage
   const codeVerifier = codeVerifiers.get(state);
+  console.log('Code Verifier from storage:', codeVerifier ? 'Found' : 'Not found');
+  
   if (!codeVerifier) {
+    console.log('❌ ERROR: Code verifier not found for state:', state);
     return res.send(`
       <html>
         <body>
@@ -108,24 +126,41 @@ app.get('/callback', async (req, res) => {
   }
 
   try {
-    // Exchange code for access token with code_verifier
-    const tokenResponse = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', {
-      client_key: TIKTOK_CLIENT_KEY,
+    console.log('=== 📤 Sending token request to TikTok ===');
+    const requestData = {
+      client_id: TIKTOK_CLIENT_KEY,
       client_secret: TIKTOK_CLIENT_SECRET,
-      code: code,
+      auth_code: code,
       grant_type: 'authorization_code',
       redirect_uri: REDIRECT_URI,
       code_verifier: codeVerifier
-    }, {
+    };
+    console.log('Request URL:', 'https://business-api.tiktok.com/open_api/v1.3/tt_user/oauth2/token/');
+    console.log('Request data:', { ...requestData, client_secret: '***hidden***' });
+    
+    // Exchange code for access token with code_verifier
+    const tokenResponse = await axios.post('https://business-api.tiktok.com/open_api/v1.3/tt_user/oauth2/token/', requestData, {
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/json'
       }
     });
+
+    console.log('=== ✅ Token response received ===');
+    console.log('Response status:', tokenResponse.status);
+    console.log('Response data structure:', Object.keys(tokenResponse.data));
+    console.log('Full response:', JSON.stringify(tokenResponse.data, null, 2));
 
     // Clean up used code verifier
     codeVerifiers.delete(state);
 
-    const { access_token, refresh_token, expires_in, open_id, scope, token_type } = tokenResponse.data;
+    // Extract data from response (TikTok returns data in nested object)
+    const responseData = tokenResponse.data.data || tokenResponse.data;
+    console.log('Extracted data:', responseData);
+    
+    const { access_token, refresh_token, expires_in, open_id, scope, token_type } = responseData;
+    console.log('Access token:', access_token ? 'Received' : 'Missing');
+    console.log('Refresh token:', refresh_token ? 'Received' : 'Missing');
+    console.log('Open ID:', open_id);
 
     // Display the token information
     res.send(`
@@ -294,7 +329,12 @@ app.get('/callback', async (req, res) => {
     `);
 
   } catch (error) {
-    console.error('Error exchanging code for token:', error.response?.data || error.message);
+    console.error('=== ❌ ERROR exchanging code for token ===');
+    console.error('Error message:', error.message);
+    console.error('Error response status:', error.response?.status);
+    console.error('Error response data:', JSON.stringify(error.response?.data, null, 2));
+    console.error('Full error:', error);
+    
     res.send(`
       <html>
         <body style="font-family: Arial; padding: 40px; background: #f5f5f5;">
